@@ -215,6 +215,7 @@ std::complex<float> ** W;
 // Compute precoding vector given CSI
 void * design_zf_precoder (void *)
 {
+  std::cout << "Design zero-forcing Precoder\n";
   // TODO update W
   return NULL;
 }
@@ -947,7 +948,7 @@ void * tx_worker (void * _data)
 
   // reset baseband gains
   bb_gain[0] = BASEBAND_GAIN;
-//  bb_gain[1] = BASEBAND_GAIN;
+  bb_gain[1] = BASEBAND_GAIN;
 
   // initialize tx streamer
   uhd::stream_args_t tx_stream_args(CPU, WIRE);
@@ -1020,7 +1021,7 @@ void * tx_worker (void * _data)
   txmd.has_time_spec = false;
 
   // send sync words
-  for(unsigned int repeat = 0; repeat < 100; repeat++) {
+  for(unsigned int repeat = 0; repeat < 1; repeat++) {
     num_samples_sent = tx_stream->send(tx_buffer,
                                        num_samples_read,
                                        txmd,
@@ -1036,7 +1037,7 @@ void * tx_worker (void * _data)
       }
     }
     // send zeros in between
-    for(unsigned int zBlock = 0; zBlock < 10; zBlock++) {
+    for(unsigned int zBlock = 0; zBlock < 1; zBlock++) {
       num_samples_sent = tx_stream->send(fg_buffer,
                                          num_samples_read,
                                          txmd,
@@ -1359,10 +1360,5 @@ int UHD_SAFE_MAIN(int argc, char **argv)
     std::cout << "    rx thread exit with     : "
               << rxmd.strerror() << "\n";
   }
-
-  fg.print();
-  mod.print_config();
-  fs.print();
-  dem.print_config();
   return 0;
 }

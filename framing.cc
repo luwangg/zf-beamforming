@@ -440,31 +440,18 @@ void framesync::execute_seek_sync()
   std::complex<float> * rc;
   windowcf_read(input_buffer, &rc);
 
-// copied from original source
-    unsigned int i;
-    float g = 0.0f;
-    for (i=cp_len; i<M + cp_len; i++) {
-        // compute |rc[i]|^2 efficiently
-        g += std::real(rc[i])*std::real(rc[i]) + 
-             std::imag(rc[i])*std::imag(rc[i]);
-    }
-    g = (float)(M) / g;
+  // estimate gain
+  memmove(volk_buff_fc1, rc,
+          sizeof(std::complex<float>)*(M + cp_len));
+  // TODO Write a volk kernel to do this more efficienlty
+  volk_32fc_x2_conjugate_dot_prod_32fc(volk_buff_fc3,
+                                       volk_buff_fc1,
+                                       volk_buff_fc1,
+                                       M + cp_len);
+  float g = std::real(volk_buff_fc3[0]);
 
-// try the code below if this works 
-
-//  // estimate gain
-//  memmove(volk_buff_fc1, rc,
-//          sizeof(std::complex<float>)*(M + cp_len));
-//  // TODO Write a volk kernel to do this more efficienlty
-//  volk_32fc_x2_conjugate_dot_prod_32fc(volk_buff_fc3,
-//                                       volk_buff_fc1,
-//                                       volk_buff_fc1,
-//                                       M + cp_len);
-//  float g = std::real(volk_buff_fc3[0]);
-//
-//  // FIXME I believe it should be g / M
-//  g = (float)(M) / g;
-//  g = g / (float)(M);
+  // FIXME I believe it should be g / M
+  g = (float)(M) / g;
 
   // FIXME squelch???
 
@@ -476,35 +463,28 @@ void framesync::execute_seek_sync()
   s_hat *= g;
 
   float tau_hat  = std::arg(s_hat) * (float)(M2) / (2*M_PI);
+
+  // save gain (permits dynamic invocation of get_rssi() method)
+  g0[0] = g;
+
+  // 
+  if (std::abs(s_hat) > plcp_detect_thresh) {
+
+    int dt = (int)roundf(tau_hat);
+    // set timer appropriately...
+    timer = (M + dt) % (M2);
+    timer += M; // add delay to help ensure good S0 estimate
+    state = STATE_SYNCING;
+
   #if DEBUG_PRINT
-    printf(" - gain=%12.3f, rssi=%12.8f, s_hat=%12.4f <%12.8f>, tau_hat=%8.3f\n",
-            sqrt(g),
-            -10*log10(g),
-            std::abs(s_hat), std::arg(s_hat),
-            tau_hat);
+    printf("********** frame detected! ************\n");
+    printf("    s_hat   :   %12.8f <%12.8f>\n", std::abs(s_hat),
+        std::arg(s_hat));
+    printf("  tau_hat   :   %12.8f\n", tau_hat);
+    printf("    dt      :   %12d\n", dt);
+    printf("    timer   :   %12u\n", timer);
   #endif
-
-    // save gain (permits dynamic invocation of get_rssi() method)
-    g0[0] = g;
-
-    // 
-    if (std::abs(s_hat) > plcp_detect_thresh) {
-
-        int dt = (int)roundf(tau_hat);
-        // set timer appropriately...
-        timer = (M + dt) % (M2);
-        timer += M; // add delay to help ensure good S0 estimate
-        state = STATE_SYNCING;
-
-#if DEBUG_PRINT
-        printf("********** frame detected! ************\n");
-        printf("    s_hat   :   %12.8f <%12.8f>\n", std::abs(s_hat),
-            std::arg(s_hat));
-        printf("  tau_hat   :   %12.8f\n", tau_hat);
-        printf("    dt      :   %12d\n", dt);
-        printf("    timer   :   %12u\n", timer);
-#endif
-    }
+  }
 }
 
 void framesync::estimate_gain_S0(std::complex<float> * _x)
