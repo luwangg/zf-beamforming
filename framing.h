@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <fftw3.h>
+#include <gnuradio/gr_complex.h>
 #include <complex>
 #include <liquid/liquid.h>
 
@@ -11,9 +12,18 @@ typedef void * (*zf_callback) (void *);
 
   // receiver state
 typedef enum {
-  STATE_SEEK_SYNC = 0,
-  STATE_SYNCING,
-  STATE_ZF
+  STATE_SEEK_PLATEAU = 0,
+  STATE_SAVE_ACCESS_CODES,
+  STATE_SEEK_SYNC_CH1,
+  STATE_PLCP_SHORT0_CH1,
+  STATE_PLCP_SHORT1_CH1,
+  STATE_PLCP_LONG_CH1,
+  STATE_SEEK_SYNC_CH2,
+  STATE_PLCP_SHORT0_CH2,
+  STATE_PLCP_SHORT1_CH2,
+  STATE_PLCP_LONG_CH2,
+  STATE_ZF,
+  STATE_WAIT
 } framesync_states_t;
 
 class framegen {
@@ -26,6 +36,8 @@ class framegen {
   unsigned int symbol_len;
   // number of data streams
   unsigned int num_streams;
+  // number of access codes
+  unsigned int num_access_codes;
   // subcarrier allocation for each channel
   std::vector<unsigned char *> p;
   // number of null subcarriers for each channel
@@ -59,6 +71,12 @@ class framegen {
   // pilot sequences
   std::vector<msequence> ms_pilot;
 
+  // volk buffer for volk operations
+  std::complex<float> * volk_buff_fc1;
+  std::complex<float> * volk_buff_fc2;
+  std::complex<float> * volk_buff_fc3;
+  float * volk_buff_f1;
+
  public:
   // constructor
   // _M: number of ofdm subcarriers
@@ -74,6 +92,7 @@ class framegen {
   framegen(unsigned int _M,
            unsigned int _cp_len,
            unsigned int _num_streams,
+           unsigned int _num_access_codes,
            std::vector<unsigned char *> const &_p,
            std::vector<msequence> const &_ms_S0,
            std::vector<msequence> const &_ms_S1,
@@ -82,29 +101,18 @@ class framegen {
   ~framegen();
   void print();
 
-  // transmit the PLCP sequences
-  // First the short PLCPs(2 per channel) are transmitted in TDMA.
-  // Then the long PLCP is transmtted.
-  // Returns the number of samples to be transmitted.
-  //
-  // write first PLCP short sequence 'symbol' to buffer
-  //
-  //  |<- 2*cp->|<-       M       ->|<-       M       ->|
-  //  |         |                   |                   |
-  //      +-----+-------------------+-------------------+
-  //     /      |                   |                   |
-  //    /  ..s0 |        s0         |        s0         |
-  //   /        |                   |                   |
-  //  +---------+-------------------+-------------------+-----> time
-  //  |                        |                        |
-  //  |<-        s0[a]       ->|<-        s0[b]       ->|
-  //  |        M + cp_len      |        M + cp_len      |
-  //
   unsigned int
   write_sync_words(std::vector<std::complex<float> *> tx_buff);
 
   // set the precoding vector.
   void set_W(std::complex<float> ** const _W);
+  gr_complex ** get_W();
+  void compute_W(gr_complex ** G);
+  unsigned int
+  write_zf_words_random(std::vector<gr_complex *> tx_buff);
+  unsigned int
+  write_words_random(std::vector<gr_complex *> tx_buff);
+  unsigned int get_num_streams();
 };
 
 class framesync {
@@ -119,6 +127,8 @@ class framesync {
   unsigned int symbol_len;
   // number of data streams
   unsigned int num_streams;
+  // number of access codes per stream
+  unsigned int num_access_codes;
   // subcarrier allocation for each channel
   std::vector<unsigned char *> p;
   // number of null subcarriers for each channel
@@ -170,12 +180,13 @@ class framesync {
   nco_crcf nco_rx;        // numerically-controlled oscillator
   float phi_prime;        // ...
   float p1_prime;         // filtered pilot phase slope
+  float nco_freq;
   // timing
   unsigned int timer;         // input sample timer
   unsigned int num_symbols;   // symbol counter
   unsigned int backoff;       // sample timing backoff
-  std::complex<float> s_hat_0;// first S0 symbol metrics estimate
-  std::complex<float> s_hat_1;// second S0 symbol metrics estimate
+  std::vector<gr_complex> s_hat_0;// first S0 symbol metrics estimate
+  std::vector<gr_complex> s_hat_1;// second S0 symbol metrics estimate
 
   // detection thresholds
   // plcp detection threshold, nominally 0.35
@@ -193,17 +204,63 @@ class framesync {
   // reset all
   void reset();
   // internals
-  void execute_seek_sync();
-  void execute_syncing();
-  void execute_zf();
-  void estimate_gain_S0(std::complex<float> * buff_ptr);
-  void S0_metrics(std::complex<float> * _s_hat);
+  void execute_seek_sync(unsigned int chan);
+  void execute_sc_sync(gr_complex _x);
+  void execute_save_access_codes(gr_complex _x);
+  void estimate_channel();
+  void print_estimates();
 
   // volk buffer for volk operations
   std::complex<float> * volk_buff_fc1;
   std::complex<float> * volk_buff_fc2;
   std::complex<float> * volk_buff_fc3;
                float  * volk_buff_f1;
+
+  // Schmidl & Cox
+  wdelaycf delay;
+  unsigned int input_buffer_len;
+  firfilt_crcf delay_ma;
+  firfilt_rrrf normalizer_ma;
+  gr_complex delay_conjugate;
+  gr_complex delay_corr;
+  float delay_magsquare;
+  float delay_normalize;
+  float normalizer_magsquare;
+  float normalizer_square;
+  float peak_to_angle;
+  unsigned long int plateau_start;
+  unsigned long int plateau_end;
+  bool in_plateau;
+  FILE * f_sc_debug_out;
+  FILE * f_s0_corr;
+  FILE * corr_ac11;
+  FILE * corr_ac12;
+  FILE * corr_ac13;
+  FILE * corr_ac21;
+  FILE * corr_ac22;
+  FILE * corr_ac23;
+  float * corr_buff_s0;
+  float * corr_buff_ac11;
+  float * corr_buff_ac12;
+  float * corr_buff_ac13;
+  float * corr_buff_ac21;
+  float * corr_buff_ac22;
+  float * corr_buff_ac23;
+  unsigned int index_s0;
+  unsigned int index_ac11;
+  unsigned int index_ac12;
+  unsigned int index_ac13;
+  unsigned int index_ac21;
+  unsigned int index_ac22;
+  unsigned int index_ac23;
+  gr_complex * estimate_11;
+  gr_complex * estimate_12;
+  gr_complex * estimate_13;
+  gr_complex * estimate_21;
+  gr_complex * estimate_22;
+  gr_complex * estimate_23;
+  gr_complex * estimate_1;
+  gr_complex * estimate_2;
 
  public:
   // constructor
@@ -220,6 +277,7 @@ class framesync {
   framesync(unsigned int _M,
             unsigned int _cp_len,
             unsigned int _num_streams,
+            unsigned int _num_access_codes,
             std::vector<unsigned char *> const &_p,
             std::vector<msequence> const &_ms_S0,
             std::vector<msequence> const &_ms_S1,
@@ -230,6 +288,8 @@ class framesync {
   // method to expose CSI
   void get_G(std::complex<float> ** _G);
   void print();
+  unsigned long int get_plateau_start();
+  unsigned long int get_plateau_end();
 
   unsigned long int get_sync_index();
   unsigned long long int get_num_samples_processed();
@@ -291,8 +351,16 @@ void ofdmframe_init_S0(const unsigned char * _p,
 //  ms      :   pn_sequence generator to generate S1
 void ofdmframe_init_S1(const unsigned char * _p,
                        unsigned int _M,
+                       unsigned int _num_access_codes,
                        std::complex<float> * _S1,
                        std::complex<float> * _s1,
                        unsigned int *  _M_S1,
                        msequence ms);
+
+gr_complex liquid_cexpjf(float theta);
+float cabsf(gr_complex z);
+float cargf(gr_complex z);
+float fabsf(float x);
+gr_complex conjf(gr_complex z);
+
 #endif // FRAMING_H

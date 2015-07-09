@@ -21,12 +21,20 @@ sup_src			:=									\
 
 sup_obj					= $(patsubst %.cc, %.o, $(sup_src))
 
-all							: main.exe zf.exe
+all							: main.exe
+	
+tests						: zf.exe test-fftshift.x
 
 main.exe				: $(sup_obj) main.o
 	$(env) $(CXX) $^ -o $@ $(LDFLAGS)
 
 main.o					: main.cc
+	$(CXX) $(CFLAGS) -c $< -o $@
+
+test-fftshift.x	: $(sup_obj) test-fftshift.o
+	$(env) $(CXX) $^ -o $@ $(LDFLAGS)
+
+test-fftshift.o	: test-fftshift.cc
 	$(CXX) $(CFLAGS) -c $< -o $@
 
 zf.exe					: $(sup_obj) zf.o
@@ -41,4 +49,5 @@ $(sup_obj)			: %.o :	%.cc
 clean						:
 	$(RM) main.exe main.o
 	$(RM) zf.exe zf.o
+	$(RM) test-fftshift.x test-fftshift.o
 	$(RM) $(sup_obj)
